@@ -1,0 +1,72 @@
+<svg width="1024" height="1024" viewBox="0 0 680 680" xmlns="http://www.w3.org/2000/svg">
+<style>
+  .bg { fill: #000000; }
+  .gear-outer { fill: #2A2A2A; }
+  .gear-face { fill: #080808; }
+  .tooth { fill: #383838; stroke: #444444; stroke-width: 0.5; }
+  .arc-track { stroke: #2A2A2A; stroke-width: 6; fill: none; stroke-linecap: round; }
+  .arc-progress { stroke: #FFFFFF; stroke-width: 6; fill: none; stroke-linecap: round; }
+  .tick-major { stroke: #777777; stroke-width: 2.5; stroke-linecap: round; }
+  .tick-minor { stroke: #444444; stroke-width: 1.2; stroke-linecap: round; }
+  .hand-min { stroke: #CCCCCC; stroke-width: 4; stroke-linecap: round; }
+  .hand-hr { stroke: #FFFFFF; stroke-width: 5.5; stroke-linecap: round; }
+  .hand-sec { stroke: #FFFFFF; stroke-width: 2; stroke-linecap: round; }
+  .center-dot { fill: #FFFFFF; }
+  .center-ring { fill: #080808; stroke: #FFFFFF; stroke-width: 1.5; }
+  .chapter-dot { fill: #FFFFFF; opacity: 0.7; }
+  .chapter-dot-dim { fill: #444444; opacity: 0.5; }
+</style>
+
+<rect width="680" height="680" fill="#000000"/>
+<rect x="40" y="40" width="600" height="600" rx="130" class="bg"/>
+
+<g transform="translate(340,340)">
+  <circle cx="0" cy="0" r="220" class="gear-outer"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(0)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(22.5)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(45)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(67.5)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(90)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(112.5)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(135)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(157.5)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(180)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(202.5)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(225)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(247.5)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(270)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(292.5)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(315)"/>
+  <path d="M205,-30 L235,-18 L235,0 L205,10 Z" class="tooth" transform="rotate(337.5)"/>
+  <circle cx="0" cy="0" r="195" class="gear-face"/>
+  <circle cx="0" cy="0" r="170" class="arc-track"/>
+  <circle cx="0" cy="0" r="170" class="arc-progress" stroke-dasharray="748 1068" stroke-dashoffset="0" transform="rotate(-90)"/>
+  <circle cx="0" cy="-170" r="4" class="chapter-dot" transform="rotate(0)"/>
+  <circle cx="0" cy="-170" r="3" class="chapter-dot-dim" transform="rotate(90)"/>
+  <circle cx="0" cy="-170" r="3" class="chapter-dot-dim" transform="rotate(180)"/>
+  <circle cx="0" cy="-170" r="4" class="chapter-dot" transform="rotate(252)"/>
+  <line x1="0" y1="-148" x2="0" y2="-130" class="tick-major" transform="rotate(0)"/>
+  <line x1="0" y1="-148" x2="0" y2="-130" class="tick-major" transform="rotate(90)"/>
+  <line x1="0" y1="-148" x2="0" y2="-130" class="tick-major" transform="rotate(180)"/>
+  <line x1="0" y1="-148" x2="0" y2="-130" class="tick-major" transform="rotate(270)"/>
+  <line x1="0" y1="-148" x2="0" y2="-138" class="tick-minor" transform="rotate(30)"/>
+  <line x1="0" y1="-148" x2="0" y2="-138" class="tick-minor" transform="rotate(60)"/>
+  <line x1="0" y1="-148" x2="0" y2="-138" class="tick-minor" transform="rotate(120)"/>
+  <line x1="0" y1="-148" x2="0" y2="-138" class="tick-minor" transform="rotate(150)"/>
+  <line x1="0" y1="-148" x2="0" y2="-138" class="tick-minor" transform="rotate(210)"/>
+  <line x1="0" y1="-148" x2="0" y2="-138" class="tick-minor" transform="rotate(240)"/>
+  <line x1="0" y1="-148" x2="0" y2="-138" class="tick-minor" transform="rotate(300)"/>
+  <line x1="0" y1="-148" x2="0" y2="-138" class="tick-minor" transform="rotate(330)"/>
+  <line x1="0" y1="10" x2="0" y2="-78" class="hand-hr" transform="rotate(304.5)"/>
+  <line x1="0" y1="10" x2="0" y2="-100" class="hand-min" transform="rotate(54)"/>
+  <line x1="0" y1="25" x2="0" y2="-110" class="hand-sec" transform="rotate(216)"/>
+  <circle cx="0" cy="0" r="8" class="center-ring"/>
+  <circle cx="0" cy="0" r="4" class="center-dot"/>
+</g>
+
+<g transform="translate(340, 582)">
+  <rect x="-46" y="-4" width="28" height="8" rx="4" fill="#FFFFFF" opacity="0.85"/>
+  <rect x="-14" y="-4" width="16" height="8" rx="4" fill="#FFFFFF" opacity="0.65"/>
+  <rect x="6" y="-4" width="40" height="8" rx="4" fill="#FFFFFF" opacity="0.45"/>
+</g>
+</svg>
