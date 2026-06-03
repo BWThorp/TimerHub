@@ -35,6 +35,12 @@ public struct TimerHubActivityAttributes: ActivityAttributes {
         public var nextIntervalName: String
         public var nextIntervalSeconds: Int
 
+        // Absolute wall-clock end of the current interval.
+        // Used by the Live Activity views with Text(date, style: .timer)
+        // for accurate per-second countdown without polling.
+        // Nil when paused or finished.
+        public var timerEndDate: Date?
+
         public init(
             isRunning: Bool = false,
             isPaused: Bool = false,
@@ -48,7 +54,8 @@ public struct TimerHubActivityAttributes: ActivityAttributes {
             sessionRepeatTotal: Int = 1,
             colorName: String = "green",
             nextIntervalName: String = "",
-            nextIntervalSeconds: Int = 0
+            nextIntervalSeconds: Int = 0,
+            timerEndDate: Date? = nil
         ) {
             self.isRunning = isRunning
             self.isPaused = isPaused
@@ -63,6 +70,7 @@ public struct TimerHubActivityAttributes: ActivityAttributes {
             self.colorName = colorName
             self.nextIntervalName = nextIntervalName
             self.nextIntervalSeconds = nextIntervalSeconds
+            self.timerEndDate = timerEndDate
         }
 
         // MARK: Convenience helpers (no SwiftUI dependency)

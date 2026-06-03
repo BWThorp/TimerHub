@@ -23,6 +23,35 @@ private extension Color {
     }
 }
 
+// MARK: - Live Activity countdown helper
+// Uses Text(date, style: .timer) when a wall-clock end date is present,
+// falling back to the static formatted string when paused or finished.
+
+private struct LiveActivityCountdown: View {
+    let state: TimerHubActivityAttributes.ContentState
+    var fontSize: CGFloat
+    var weight: Font.Weight = .semibold
+    let accent: Color
+
+    var body: some View {
+        if !state.isPaused, !state.isFinished, let endDate = state.timerEndDate {
+            Text(endDate, style: .timer)
+                .font(.system(size: fontSize, weight: weight, design: .monospaced))
+                .foregroundStyle(accent)
+                .monospacedDigit()
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.6)
+        } else {
+            Text(state.countdownFormatted)
+                .font(.system(size: fontSize, weight: weight, design: .monospaced))
+                .foregroundStyle(accent)
+                .monospacedDigit()
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.6)
+        }
+    }
+}
+
 // MARK: - Live Activity registration
 
 struct TimerHubLiveActivity: Widget {
@@ -59,11 +88,13 @@ struct TimerHubLiveActivity: Widget {
                     .padding(.leading, 4)
             } compactTrailing: {
                 // ── Compact trailing: countdown ───────────────────────────
-                Text(context.state.countdownFormatted)
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.timerColor(named: context.state.colorName))
-                    .monospacedDigit()
-                    .padding(.trailing, 4)
+                LiveActivityCountdown(
+                    state: context.state,
+                    fontSize: 14,
+                    weight: .semibold,
+                    accent: Color.timerColor(named: context.state.colorName)
+                )
+                .padding(.trailing, 4)
             } minimal: {
                 // ── Minimal (two activities): color dot ───────────────────
                 Circle()
@@ -95,10 +126,7 @@ private struct LockScreenLiveActivityView: View {
                     .stroke(accent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .animation(.linear(duration: 1), value: state.progressFraction)
-                Text(state.countdownFormatted)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(accent)
-                    .monospacedDigit()
+                LiveActivityCountdown(state: state, fontSize: 13, weight: .semibold, accent: accent)
             }
             .frame(width: 58, height: 58)
 
@@ -169,10 +197,7 @@ private struct ExpandedLeadingView: View {
                 .stroke(accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.linear(duration: 1), value: state.progressFraction)
-            Text(state.countdownFormatted)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundStyle(accent)
-                .monospacedDigit()
+            LiveActivityCountdown(state: state, fontSize: 12, weight: .bold, accent: accent)
         }
         .frame(width: 52, height: 52)
         .padding(.leading, 8)

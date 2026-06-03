@@ -38,37 +38,6 @@ private extension Color {
     }
 }
 
-// MARK: - CountdownText
-// Uses Text(date, style: .timer) when running — updates every second automatically.
-// Falls back to a static formatted string when paused or inactive.
-
-private struct CountdownText: View {
-    let snapshot: WidgetSnapshot
-    var fontSize: CGFloat = 18
-    var weight: Font.Weight = .bold
-    let accent: Color
-
-    var body: some View {
-        if snapshot.isActive, !snapshot.isPaused, let endDate = snapshot.timerEndDate {
-            Text(endDate, style: .timer)
-                .font(.system(size: fontSize, weight: weight, design: .monospaced))
-                .foregroundStyle(accent)
-                .monospacedDigit()
-                .minimumScaleFactor(0.7)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-        } else {
-            Text(snapshot.isActive && !snapshot.isPaused ? snapshot.countdownFormatted : "--:--")
-                .font(.system(size: fontSize, weight: weight, design: .monospaced))
-                .foregroundStyle(accent)
-                .monospacedDigit()
-                .minimumScaleFactor(0.7)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-        }
-    }
-}
-
 // MARK: - Timeline provider
 
 struct TimerHubWidgetProvider: TimelineProvider {
@@ -85,13 +54,22 @@ struct TimerHubWidgetProvider: TimelineProvider {
         let snapshot = loadSnapshot()
         let entry    = TimerHubWidgetEntry(date: Date(), snapshot: snapshot)
 
-        // Refresh every 30 seconds while a session is active; every 5 min otherwise.
-        // The main app also calls WidgetCenter.shared.reloadTimelines("TimerHubWidget")
-        // on significant state changes (start, pause, finish) for immediate updates.
-        let refreshInterval: TimeInterval = snapshot.isActive ? 30 : 300
-        let nextUpdate = Date().addingTimeInterval(refreshInterval)
+        // When active: schedule a refresh at the interval end date so the widget
+        // updates when the timer finishes, even if reloadAllTimelines() is delayed.
+        // When inactive: refresh every 60s in case a stale active state slipped through.
+        let policy: TimelineReloadPolicy
+        if snapshot.isActive, let endDate = snapshot.timerEndDate {
+            // Refresh just after the interval ends so the widget shows completion.
+            policy = .after(endDate + 1)
+        } else if snapshot.isActive {
+            // Active but no end date (paused) — refresh in 60s
+            policy = .after(Date().addingTimeInterval(60))
+        } else {
+            // Inactive — short refresh to catch any stale active entries
+            policy = .after(Date().addingTimeInterval(60))
+        }
 
-        let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
+        let timeline = Timeline(entries: [entry], policy: policy)
         completion(timeline)
     }
 
@@ -179,7 +157,10 @@ private struct SmallWidgetView: View {
                         .trim(from: 0, to: snapshot.progressFraction)
                         .stroke(accent, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                    CountdownText(snapshot: snapshot, fontSize: 16, weight: .bold, accent: accent)
+                    Text(snapshot.countdownFormatted)
+                        .font(.system(size: 16, weight: .bold, design: .monospaced))
+                        .foregroundStyle(accent)
+                        .monospacedDigit()
                 }
                 .frame(width: 64, height: 64)
                 .frame(maxWidth: .infinity)
@@ -234,7 +215,10 @@ private struct MediumWidgetView: View {
                     .stroke(accent, style: StrokeStyle(lineWidth: 6, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 VStack(spacing: 2) {
-                    CountdownText(snapshot: snapshot, fontSize: 18, weight: .bold, accent: accent)
+                    Text(snapshot.isActive ? snapshot.countdownFormatted : "--:--")
+                        .font(.system(size: 18, weight: .bold, design: .monospaced))
+                        .foregroundStyle(accent)
+                        .monospacedDigit()
                     if snapshot.isPaused {
                         Text("PAUSED")
                             .font(.system(size: 8, weight: .medium, design: .monospaced))
@@ -350,7 +334,10 @@ private struct LargeWidgetView: View {
                         .stroke(accent, style: StrokeStyle(lineWidth: 10, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                     VStack(spacing: 4) {
-                        CountdownText(snapshot: snapshot, fontSize: 38, weight: .light, accent: accent)
+                        Text(snapshot.countdownFormatted)
+                            .font(.system(size: 38, weight: .light, design: .monospaced))
+                            .foregroundStyle(accent)
+                            .monospacedDigit()
                         Text(snapshot.intervalName)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.primary)

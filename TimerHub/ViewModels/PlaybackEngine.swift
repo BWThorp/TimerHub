@@ -609,7 +609,8 @@ final class PlaybackEngine {
             sessionRepeatTotal: sessionRepeatCount,
             colorName: timerColor.name,
             nextIntervalName: nextStep?.interval.name ?? "",
-            nextIntervalSeconds: nextStep?.interval.durationSeconds ?? 0
+            nextIntervalSeconds: nextStep?.interval.durationSeconds ?? 0,
+            timerEndDate: (isRunning && !isPaused && !isFinished) ? intervalEndDate : nil
         )
     }
 
