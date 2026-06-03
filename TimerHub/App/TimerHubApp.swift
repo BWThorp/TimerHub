@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import Combine
+import UserNotifications
 
 @main
 struct TimerHubApp: App {
@@ -32,6 +33,11 @@ struct TimerHubApp: App {
                 fatalError("Could not create ModelContainer even after wiping store: \(error)")
             }
         }
+
+        // Request notification permission for background timer alerts
+        UNUserNotificationCenter.current().requestAuthorization(
+            options: [.alert, .sound, .badge]
+        ) { _, _ in }
     }
 
     var body: some Scene {

@@ -225,7 +225,14 @@ final class TimerManager {
         let content = UNMutableNotificationContent()
         content.title = "Timer Complete"
         content.body  = "\(timer.name) — \(timer.totalFormatted)"
-        content.sound = .default
+
+        // Use the timer's selected alert sound if available
+        if timer.alertType == .sound,
+           let entry = SoundLibrary.entry(named: SoundLibrary.validated(timer.alertSoundName)) {
+            content.sound = UNNotificationSound(named: UNNotificationSoundName("\(entry.fileName).wav"))
+        } else {
+            content.sound = .default
+        }
 
         let trigger = UNTimeIntervalNotificationTrigger(
             timeInterval: Double(timer.secondsRemaining),

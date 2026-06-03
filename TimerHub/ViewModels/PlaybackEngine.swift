@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AVFoundation
+import UserNotifications
 
 // MARK: - Playback step
 
@@ -45,6 +46,14 @@ final class PlaybackEngine {
     private var audioPlayer: AVAudioPlayer?
     private var speechSynth: AVSpeechSynthesizer?
     private let settings = AppSettings.shared
+
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundDate: Date?                        // when we entered background
+    private var sceneObservers: [NSObjectProtocol] = []
+
+    // MARK: - Notification identifiers
+
+    private static let notificationPrefix = "timerhub.playback."
 
     // MARK: - Derived state
 
@@ -122,6 +131,186 @@ final class PlaybackEngine {
 
     // MARK: - Session loading
 
+    init() {
+        let didEnterBackground = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.handleDidEnterBackground()
+        }
+        let willEnterForeground = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.handleWillEnterForeground()
+        }
+        sceneObservers = [didEnterBackground, willEnterForeground]
+    }
+
+    deinit {
+        for observer in sceneObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    // MARK: - Background / Foreground
+
+    private func handleDidEnterBackground() {
+        guard isRunning, !isPaused else { return }
+        backgroundDate = Date()
+        schedulePlaybackNotifications()
+
+        // Request a short background task so the timer stays alive briefly
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask { [weak self] in
+            self?.endBackgroundTask()
+        }
+    }
+
+    private func handleWillEnterForeground() {
+        cancelPlaybackNotifications()
+
+        // Reconcile elapsed time while we were in the background
+        if let bgDate = backgroundDate, isRunning, !isPaused {
+            let elapsed = Int(Date().timeIntervalSince(bgDate))
+            reconcileAfterBackground(elapsedSeconds: elapsed)
+        }
+        backgroundDate = nil
+        endBackgroundTask()
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
+    }
+
+    /// Fast-forward the playback state by the number of seconds that passed
+    /// while the app was suspended.
+    private func reconcileAfterBackground(elapsedSeconds: Int) {
+        var remaining = elapsedSeconds
+
+        while remaining > 0 && isRunning && !isFinished {
+            if secondsRemaining > remaining {
+                // Still within the current step
+                secondsRemaining -= remaining
+                remaining = 0
+            } else {
+                // This step completed while we were away
+                remaining -= secondsRemaining
+                secondsRemaining = 0
+                // Advance without playing sounds (the notification handled alerting)
+                advanceStep()
+            }
+        }
+    }
+
+    // MARK: - Playback notifications
+
+    /// Schedule a local notification for every remaining interval transition.
+    private func schedulePlaybackNotifications() {
+        let center = UNUserNotificationCenter.current()
+        var cumulativeSeconds = secondsRemaining  // time until first transition
+
+        // Notification for the current step ending
+        if let current = currentStep, cumulativeSeconds > 0 {
+            scheduleOneNotification(
+                center: center,
+                identifier: "\(Self.notificationPrefix)\(stepIndex)",
+                title: "Interval Complete",
+                body: current.interval.name,
+                soundName: notificationSoundFile(for: current.interval),
+                timeInterval: Double(cumulativeSeconds)
+            )
+        }
+
+        // Notifications for subsequent steps
+        for i in (stepIndex + 1)..<steps.count {
+            cumulativeSeconds += steps[i].interval.durationSeconds
+            scheduleOneNotification(
+                center: center,
+                identifier: "\(Self.notificationPrefix)\(i)",
+                title: "Interval Complete",
+                body: steps[i].interval.name,
+                soundName: notificationSoundFile(for: steps[i].interval),
+                timeInterval: Double(cumulativeSeconds)
+            )
+        }
+
+        // Schedule a "Session Complete" notification at the very end,
+        // using the last interval's sound so it matches in-app behavior.
+        let sessionEnd = cumulativeSeconds
+        if sessionEnd > 0 {
+            let lastSound: String?
+            if let lastInterval = steps.last?.interval {
+                lastSound = notificationSoundFile(for: lastInterval)
+            } else {
+                lastSound = nil
+            }
+            scheduleOneNotification(
+                center: center,
+                identifier: "\(Self.notificationPrefix)session-complete",
+                title: "Session Complete",
+                body: "All intervals finished",
+                soundName: lastSound,
+                timeInterval: Double(sessionEnd)
+            )
+        }
+    }
+
+    /// Returns the bundled sound filename (e.g. "Ding.wav") for a given interval,
+    /// or nil if the interval uses a non-sound alert type.
+    private func notificationSoundFile(for interval: TimerInterval) -> String? {
+        guard interval.alertTypeEnum == .sound else { return nil }
+        let name = SoundLibrary.validated(interval.alertSoundName)
+        guard let entry = SoundLibrary.entry(named: name) else { return nil }
+        return "\(entry.fileName).wav"
+    }
+
+    private func scheduleOneNotification(
+        center: UNUserNotificationCenter,
+        identifier: String,
+        title: String,
+        body: String,
+        soundName: String?,
+        timeInterval: Double
+    ) {
+        guard timeInterval > 0 else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body  = body
+
+        if let soundName {
+            content.sound = UNNotificationSound(named: UNNotificationSoundName(soundName))
+        } else {
+            content.sound = .default
+        }
+
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: timeInterval,
+            repeats: false
+        )
+        let request = UNNotificationRequest(
+            identifier: identifier,
+            content: content,
+            trigger: trigger
+        )
+        center.add(request)
+    }
+
+    private func cancelPlaybackNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let ids = requests
+                .map(\.identifier)
+                .filter { $0.hasPrefix(Self.notificationPrefix) }
+            if !ids.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: ids)
+            }
+        }
+    }
+
+    // MARK: - Load session
+
     func load(session: TimerSession) {
         stop()
         baseSteps = session.sortedIntervals.flatMap { interval in
@@ -185,6 +374,8 @@ final class PlaybackEngine {
         audioPlayer?.stop()
         speechSynth?.stopSpeaking(at: .immediate)
         handleScreenAwake(false)
+        cancelPlaybackNotifications()
+        endBackgroundTask()
     }
 
     // MARK: - Timer
@@ -281,7 +472,16 @@ final class PlaybackEngine {
     }
 
     private func fireSessionCompleteAlert() {
-        playSound(named: "SessionComplete")
+        // Only play the session-complete sound if the last interval
+        // doesn't have its own sound — otherwise it would cut it off.
+        let lastInterval = steps.last?.interval
+        let lastHasSound = lastInterval?.alertTypeEnum == .sound ||
+                           lastInterval?.alertTypeEnum == .music
+
+        if !lastHasSound {
+            playSound(named: "SessionComplete")
+        }
+
         if settings.hapticsEnabled {
             #if DEBUG
             print("🫨 Haptic: session complete (notification .success)")
