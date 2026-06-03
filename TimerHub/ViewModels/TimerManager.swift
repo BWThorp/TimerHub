@@ -2,6 +2,7 @@ import SwiftUI
 import Combine
 import AVFoundation
 import UserNotifications
+import WidgetKit
 
 // MARK: - TimerManager
 // Manages all concurrent QuickTimers from the Timers tab.
@@ -52,6 +53,7 @@ final class TimerManager {
         scheduleNotification(for: timer)
         ensureTickerRunning()
         updateScreenAwake()
+        writeWidgetSnapshot()
     }
 
     func pause(_ timer: QuickTimer) {
@@ -59,6 +61,7 @@ final class TimerManager {
         timer.state = .paused
         cancelNotification(for: timer)
         updateScreenAwake()
+        writeWidgetSnapshot()
     }
 
     func resume(_ timer: QuickTimer) {
@@ -67,6 +70,7 @@ final class TimerManager {
         scheduleNotification(for: timer)
         ensureTickerRunning()
         updateScreenAwake()
+        writeWidgetSnapshot()
     }
 
     func togglePause(_ timer: QuickTimer) {
@@ -91,6 +95,7 @@ final class TimerManager {
         cancelNotification(for: timer)
         timers.removeAll { $0.id == timer.id }
         updateScreenAwake()
+        writeWidgetSnapshot()
     }
 
     func removeFinished() {
@@ -99,6 +104,7 @@ final class TimerManager {
             cancelNotification(for: t)
         }
         timers.removeAll { $0.state == .finished }
+        writeWidgetSnapshot()
     }
 
     /// Update an existing timer's settings and restart it with the new duration.
@@ -143,6 +149,11 @@ final class TimerManager {
             }
         }
 
+        // Update widget every tick while timers are running
+        if anyRunning {
+            writeWidgetSnapshot()
+        }
+
         if !anyRunning {
             ticker?.invalidate()
             ticker = nil
@@ -155,6 +166,7 @@ final class TimerManager {
         fireAlert(for: timer)
         showBanner(timerName: timer.name)
         updateScreenAwake()
+        writeWidgetSnapshot()
 
         if settings.hapticsEnabled {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -261,5 +273,66 @@ final class TimerManager {
 
     private func updateScreenAwake() {
         UIApplication.shared.isIdleTimerDisabled = hasActiveTimers && settings.keepScreenAwake
+    }
+
+    // MARK: - Widget snapshot
+
+    /// Write the most prominent active timer to the shared App Group
+    /// so the Home Screen widget can display it.
+    private func writeWidgetSnapshot() {
+        let featured = timers.first { $0.state == .running }
+                    ?? timers.first { $0.state == .paused }
+
+        guard let t = featured else {
+            WidgetDataWriter.clear()
+            return
+        }
+
+        let endDate: Date? = (t.state == .running)
+            ? Date().addingTimeInterval(Double(t.secondsRemaining))
+            : nil
+
+        let snapshot = WidgetSnapshot(
+            isActive: true,
+            sessionName: "Quick Timer",
+            intervalName: t.name,
+            secondsRemaining: t.secondsRemaining,
+            totalIntervalSeconds: t.totalSeconds,
+            stepIndex: 0,
+            totalSteps: 1,
+            sessionRepeat: 0,
+            sessionRepeatTotal: 1,
+            colorName: colorName(for: t),
+            nextIntervalName: "",
+            nextIntervalSeconds: 0,
+            isPaused: t.state == .paused,
+            isFinished: false,
+            updatedAt: Date(),
+            timerEndDate: endDate,
+            pausedSecondsRemaining: t.state == .paused ? t.secondsRemaining : nil
+        )
+        WidgetDataWriter.write(snapshot)
+    }
+
+    /// Traffic-light color name for a quick timer, matching PlaybackEngine logic.
+    private func colorName(for timer: QuickTimer) -> String {
+        let remaining = timer.secondsRemaining
+        let duration  = timer.totalSeconds
+        guard duration > 0 else { return "green" }
+
+        if duration < 15 {
+            if remaining <= 2 { return "red" }
+            if remaining <= 5 { return "yellow" }
+        } else if duration < 60 {
+            if remaining <= 5  { return "red" }
+            if remaining <= 10 { return "yellow" }
+        } else if duration <= 3600 {
+            if Double(remaining) / Double(duration) <= 0.05 { return "red" }
+            if Double(remaining) / Double(duration) <= 0.20 { return "yellow" }
+        } else {
+            if Double(remaining) / Double(duration) <= 0.025 { return "red" }
+            if Double(remaining) / Double(duration) <= 0.10  { return "yellow" }
+        }
+        return "green"
     }
 }

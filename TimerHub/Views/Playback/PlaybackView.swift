@@ -242,8 +242,7 @@ struct FillCountdownView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 20))
 
                 // Countdown
-                Text(countdownText)
-                    .font(.system(size: 72, weight: .light, design: .monospaced))
+                CountdownDisplayText(engine: engine, fontSize: 72, weight: .light)
                     .foregroundStyle(accentColor)
                     .animation(.easeInOut(duration: 0.3), value: accentColor)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -256,16 +255,6 @@ struct FillCountdownView: View {
         .animation(.easeInOut(duration: 0.3), value: engine.isPaused)
     }
 
-    private var countdownText: String {
-        let sec = engine.countsUp ? engine.secondsElapsed : engine.secondsRemaining
-        if sec >= 3600 {
-            return String(format: "%d:%02d:%02d", sec / 3600, (sec % 3600) / 60, sec % 60)
-        } else if sec >= 60 {
-            return String(format: "%d:%02d", sec / 60, sec % 60)
-        } else {
-            return String(format: ":%02d", sec)
-        }
-    }
 }
 
 // MARK: - Ring countdown view
@@ -308,8 +297,7 @@ struct RingCountdownView: View {
                     .animation(.linear(duration: 1.0), value: engine.progressFraction)
 
                 // Countdown
-                Text(countdownText)
-                    .font(.system(size: 54, weight: .light, design: .monospaced))
+                CountdownDisplayText(engine: engine, fontSize: 54, weight: .light)
                     .foregroundStyle(accentColor)
                     .animation(.easeInOut(duration: 0.3), value: accentColor)
             }
@@ -319,7 +307,35 @@ struct RingCountdownView: View {
         .animation(.easeInOut(duration: 0.3), value: engine.isPaused)
     }
 
-    private var countdownText: String {
+}
+
+// MARK: - Countdown display text
+// Uses Text(date, style: .timer) when a wall-clock end date is available so the
+// app display is anchored to the same absolute time as the widget — they cannot drift.
+// Falls back to a formatted static string when counting up or when paused.
+
+struct CountdownDisplayText: View {
+    @Bindable var engine: PlaybackEngine
+    var fontSize: CGFloat
+    var weight: Font.Weight
+
+    var body: some View {
+        if !engine.countsUp, !engine.isPaused, let endDate = engine.intervalEndDate {
+            Text(endDate, style: .timer)
+                .font(.system(size: fontSize, weight: weight, design: .monospaced))
+                .monospacedDigit()
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.6)
+        } else {
+            Text(staticCountdown)
+                .font(.system(size: fontSize, weight: weight, design: .monospaced))
+                .monospacedDigit()
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.6)
+        }
+    }
+
+    private var staticCountdown: String {
         let sec = engine.countsUp ? engine.secondsElapsed : engine.secondsRemaining
         if sec >= 3600 {
             return String(format: "%d:%02d:%02d", sec / 3600, (sec % 3600) / 60, sec % 60)

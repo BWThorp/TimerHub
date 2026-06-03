@@ -1,7 +1,11 @@
+// PlaybackEngine.swift  (replace existing file)
+// Main app target.
+
 import SwiftUI
 import Combine
 import AVFoundation
 import UserNotifications
+import WidgetKit
 
 // MARK: - Playback step
 
@@ -20,6 +24,15 @@ enum TimerColor {
         case .green:  return Color("AccentGreen")
         case .yellow: return Color("AccentYellow")
         case .red:    return Color("AccentRed")
+        }
+    }
+
+    /// String representation for ContentState (no SwiftUI dependency needed there).
+    var name: String {
+        switch self {
+        case .green:  return "green"
+        case .yellow: return "yellow"
+        case .red:    return "red"
         }
     }
 }
@@ -42,6 +55,7 @@ final class PlaybackEngine {
     private(set) var steps: [PlaybackStep]  = []
     private var baseSteps: [PlaybackStep]   = []   // one full pass, used for looping
     private var sessionRepeatCount: Int     = 1
+    private var sessionName: String         = ""
     private var timer: Timer?
     private var audioPlayer: AVAudioPlayer?
     private var speechSynth: AVSpeechSynthesizer?
@@ -49,6 +63,7 @@ final class PlaybackEngine {
 
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var backgroundDate: Date?                        // when we entered background
+    private(set) var intervalEndDate: Date?                  // absolute wall-clock end of current interval
     private var sceneObservers: [NSObjectProtocol] = []
 
     // MARK: - Notification identifiers
@@ -95,8 +110,6 @@ final class PlaybackEngine {
         guard let step = currentStep else { return 0 }
         let total = step.interval.durationSeconds
         guard total > 0 else { return 0 }
-        // Lead by one tick so the 1-second animation completes
-        // exactly as the next number appears on screen
         let leading = max(0, secondsRemaining - 1)
         return 1.0 - (Double(leading) / Double(total))
     }
@@ -109,19 +122,15 @@ final class PlaybackEngine {
         let remaining = secondsRemaining
 
         if duration < 15 {
-            // Very short intervals: yellow at 5s, red at 2s
             if remaining <= 2 { return .red }
             if remaining <= 5 { return .yellow }
         } else if duration < 60 {
-            // Short intervals: yellow at 10s, red at 5s
             if remaining <= 5  { return .red }
             if remaining <= 10 { return .yellow }
         } else if duration <= 3600 {
-            // 1–60 minutes: yellow at 20%, red at 5%
             if Double(remaining) / Double(duration) <= 0.05 { return .red }
             if Double(remaining) / Double(duration) <= 0.20 { return .yellow }
         } else {
-            // Over 60 minutes: yellow at 10%, red at 2.5%
             if Double(remaining) / Double(duration) <= 0.025 { return .red }
             if Double(remaining) / Double(duration) <= 0.10  { return .yellow }
         }
@@ -160,7 +169,6 @@ final class PlaybackEngine {
         backgroundDate = Date()
         schedulePlaybackNotifications()
 
-        // Request a short background task so the timer stays alive briefly
         backgroundTaskID = UIApplication.shared.beginBackgroundTask { [weak self] in
             self?.endBackgroundTask()
         }
@@ -169,13 +177,41 @@ final class PlaybackEngine {
     private func handleWillEnterForeground() {
         cancelPlaybackNotifications()
 
-        // Reconcile elapsed time while we were in the background
-        if let bgDate = backgroundDate, isRunning, !isPaused {
-            let elapsed = Int(Date().timeIntervalSince(bgDate))
-            reconcileAfterBackground(elapsedSeconds: elapsed)
+        // Reconcile using the absolute end date if we have one — much more
+        // accurate than counting elapsed integer seconds.
+        if isRunning, !isPaused {
+            if let endDate = intervalEndDate {
+                let remaining = Int(endDate.timeIntervalSinceNow.rounded(.up))
+                if remaining <= 0 {
+                    // The interval(s) expired while we were backgrounded.
+                    // Use the old integer path to advance through steps.
+                    if let bgDate = backgroundDate {
+                        let elapsed = Int(Date().timeIntervalSince(bgDate))
+                        reconcileAfterBackground(elapsedSeconds: elapsed)
+                    }
+                } else {
+                    // Still in the same interval — just correct secondsRemaining.
+                    secondsRemaining = remaining
+                }
+            } else if let bgDate = backgroundDate {
+                let elapsed = Int(Date().timeIntervalSince(bgDate))
+                reconcileAfterBackground(elapsedSeconds: elapsed)
+            }
         }
+
         backgroundDate = nil
         endBackgroundTask()
+
+        // After reconciliation, recompute intervalEndDate for the current step
+        // and push a fresh snapshot so the widget gets the correct end date.
+        if isRunning, !isFinished, !isPaused {
+            intervalEndDate = Date().addingTimeInterval(Double(secondsRemaining))
+            let state = makeContentState()
+            writeWidgetSnapshot(state)
+            Task { @MainActor in
+                LiveActivityManager.shared.update(state: state)
+            }
+        }
     }
 
     private func endBackgroundTask() {
@@ -184,21 +220,16 @@ final class PlaybackEngine {
         backgroundTaskID = .invalid
     }
 
-    /// Fast-forward the playback state by the number of seconds that passed
-    /// while the app was suspended.
     private func reconcileAfterBackground(elapsedSeconds: Int) {
         var remaining = elapsedSeconds
 
         while remaining > 0 && isRunning && !isFinished {
             if secondsRemaining > remaining {
-                // Still within the current step
                 secondsRemaining -= remaining
                 remaining = 0
             } else {
-                // This step completed while we were away
                 remaining -= secondsRemaining
                 secondsRemaining = 0
-                // Advance without playing sounds (the notification handled alerting)
                 advanceStep()
             }
         }
@@ -206,12 +237,10 @@ final class PlaybackEngine {
 
     // MARK: - Playback notifications
 
-    /// Schedule a local notification for every remaining interval transition.
     private func schedulePlaybackNotifications() {
         let center = UNUserNotificationCenter.current()
-        var cumulativeSeconds = secondsRemaining  // time until first transition
+        var cumulativeSeconds = secondsRemaining
 
-        // Notification for the current step ending
         if let current = currentStep, cumulativeSeconds > 0 {
             scheduleOneNotification(
                 center: center,
@@ -223,7 +252,6 @@ final class PlaybackEngine {
             )
         }
 
-        // Notifications for subsequent steps
         for i in (stepIndex + 1)..<steps.count {
             cumulativeSeconds += steps[i].interval.durationSeconds
             scheduleOneNotification(
@@ -236,8 +264,6 @@ final class PlaybackEngine {
             )
         }
 
-        // Schedule a "Session Complete" notification at the very end,
-        // using the last interval's sound so it matches in-app behavior.
         let sessionEnd = cumulativeSeconds
         if sessionEnd > 0 {
             let lastSound: String?
@@ -257,8 +283,6 @@ final class PlaybackEngine {
         }
     }
 
-    /// Returns the bundled sound filename (e.g. "Ding.wav") for a given interval,
-    /// or nil if the interval uses a non-sound alert type.
     private func notificationSoundFile(for interval: TimerInterval) -> String? {
         guard interval.alertTypeEnum == .sound else { return nil }
         let name = SoundLibrary.validated(interval.alertSoundName)
@@ -313,6 +337,7 @@ final class PlaybackEngine {
 
     func load(session: TimerSession) {
         stop()
+        sessionName = session.name
         baseSteps = session.sortedIntervals.flatMap { interval in
             (0..<max(1, interval.repeatCount)).map { rep in
                 PlaybackStep(interval: interval, repeatIndex: rep)
@@ -332,20 +357,27 @@ final class PlaybackEngine {
         guard !steps.isEmpty else { return }
         isRunning = true
         isPaused  = false
+        intervalEndDate = Date().addingTimeInterval(Double(secondsRemaining))
         scheduleTimer()
         handleScreenAwake(true)
         announceCurrentInterval()
+        startLiveActivity()
     }
 
     func pause() {
         isPaused = true
         timer?.invalidate()
         timer = nil
+        intervalEndDate = nil   // no countdown while paused
+        updateLiveActivity()
     }
 
     func resume() {
         isPaused = false
+        // Recompute end date from current secondsRemaining when resuming
+        intervalEndDate = Date().addingTimeInterval(Double(secondsRemaining))
         scheduleTimer()
+        updateLiveActivity()
     }
 
     func skipForward() {
@@ -360,6 +392,7 @@ final class PlaybackEngine {
         } else {
             secondsRemaining = currentStep?.interval.durationSeconds ?? 0
         }
+        updateLiveActivity()
     }
 
     func stop() {
@@ -371,11 +404,13 @@ final class PlaybackEngine {
         isAdvancing        = false
         stepIndex          = 0
         sessionRepeat      = 0
+        intervalEndDate    = nil
         audioPlayer?.stop()
         speechSynth?.stopSpeaking(at: .immediate)
         handleScreenAwake(false)
         cancelPlaybackNotifications()
         endBackgroundTask()
+        endLiveActivity(finished: false)
     }
 
     // MARK: - Timer
@@ -391,71 +426,78 @@ final class PlaybackEngine {
     private func tick() {
         guard isRunning, !isPaused, !isAdvancing else { return }
 
-        if secondsRemaining > 0 {
-            secondsRemaining -= 1
-
-            if settings.speakCountdown {
-                if countsUp {
-                    // Announce the last 3 elapsed values (e.g. 6, 7, 8 for an 8s timer)
-                    let duration = currentStep?.interval.durationSeconds ?? 0
-                    let elapsed = duration - secondsRemaining
-                    if elapsed >= duration - 2 && elapsed <= duration {
-                        speak(String(elapsed))
-                    }
-                } else {
-                    if [3, 2, 1].contains(secondsRemaining) {
-                        speak(String(secondsRemaining))
-                    }
-                }
-            }
-
-            if secondsRemaining == 0 {
-                fireAlert()
-                if countsUp {
-                    // Briefly show the final elapsed value before advancing
-                    isAdvancing = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-                        self?.isAdvancing = false
-                        self?.advanceStep()
-                    }
-                } else {
-                    advanceStep()
-                }
-            }
+        // Derive secondsRemaining from the absolute end date so the app
+        // display stays in sync with the widget and never drifts.
+        if let endDate = intervalEndDate {
+            let remaining = Int(endDate.timeIntervalSinceNow.rounded(.up))
+            secondsRemaining = max(0, remaining)
         } else {
-            // Edge case: interval with 0 duration
+            secondsRemaining = max(0, secondsRemaining - 1)
+        }
+
+        if settings.speakCountdown {
+            if countsUp {
+                let duration = currentStep?.interval.durationSeconds ?? 0
+                let elapsed = duration - secondsRemaining
+                if elapsed >= duration - 2 && elapsed <= duration {
+                    speak(String(elapsed))
+                }
+            } else {
+                if [3, 2, 1].contains(secondsRemaining) {
+                    speak(String(secondsRemaining))
+                }
+            }
+        }
+
+        // Update Live Activity every tick
+        updateLiveActivity()
+
+        if secondsRemaining == 0 {
             fireAlert()
-            advanceStep()
+            if countsUp {
+                isAdvancing = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                    self?.isAdvancing = false
+                    self?.advanceStep()
+                }
+            } else {
+                advanceStep()
+            }
         }
     }
 
     private func advanceStep() {
         let next = stepIndex + 1
         if next >= steps.count {
-            // End of one full pass — check if we need to loop
             let nextRepeat = sessionRepeat + 1
             if nextRepeat < sessionRepeatCount {
                 sessionRepeat    = nextRepeat
                 stepIndex        = 0
                 secondsRemaining = steps.first?.interval.durationSeconds ?? 0
+                intervalEndDate  = Date().addingTimeInterval(Double(secondsRemaining))
                 announceCurrentInterval()
+                updateLiveActivity()
             } else {
                 finish()
             }
         } else {
             stepIndex        = next
             secondsRemaining = currentStep?.interval.durationSeconds ?? 0
+            intervalEndDate  = Date().addingTimeInterval(Double(secondsRemaining))
             announceCurrentInterval()
+            updateLiveActivity()
         }
     }
 
     private func finish() {
         timer?.invalidate()
-        timer      = nil
-        isRunning  = false
-        isFinished = true
+        timer           = nil
+        isRunning       = false
+        isFinished      = true
+        intervalEndDate = nil
         handleScreenAwake(false)
         fireSessionCompleteAlert()
+        endLiveActivity(finished: true)
     }
 
     // MARK: - Alerts
@@ -472,8 +514,6 @@ final class PlaybackEngine {
     }
 
     private func fireSessionCompleteAlert() {
-        // Only play the session-complete sound if the last interval
-        // doesn't have its own sound — otherwise it would cut it off.
         let lastInterval = steps.last?.interval
         let lastHasSound = lastInterval?.alertTypeEnum == .sound ||
                            lastInterval?.alertTypeEnum == .music
@@ -483,13 +523,9 @@ final class PlaybackEngine {
         }
 
         if settings.hapticsEnabled {
-            #if DEBUG
-            print("🫨 Haptic: session complete (notification .success)")
-            #endif
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         }
         if settings.speakIntervalName {
-            // Small delay so the completion sound plays first
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                 self?.speak("Session complete")
             }
@@ -504,19 +540,10 @@ final class PlaybackEngine {
 
     private func playMusicURL(_ fileName: String) {
         guard !fileName.isEmpty else { return }
-
-        // Build path to the Music subdirectory in Documents
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         let fileURL = docs.appendingPathComponent("Music", isDirectory: true)
                          .appendingPathComponent(fileName)
-
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            #if DEBUG
-            print("🎵 Music file not found: \(fileURL.path)")
-            #endif
-            return
-        }
-
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         try? AVAudioSession.sharedInstance().setActive(true)
         audioPlayer = try? AVAudioPlayer(contentsOf: fileURL)
@@ -526,9 +553,6 @@ final class PlaybackEngine {
 
     private func triggerHaptic() {
         guard settings.hapticsEnabled else { return }
-        #if DEBUG
-        print("🫨 Haptic: interval alert (impact .heavy)")
-        #endif
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
     }
 
@@ -566,5 +590,80 @@ final class PlaybackEngine {
 
     private func handleScreenAwake(_ on: Bool) {
         UIApplication.shared.isIdleTimerDisabled = on && settings.keepScreenAwake
+    }
+
+    // MARK: - Live Activity helpers
+
+    /// Snapshot of the current engine state as a ContentState.
+    private func makeContentState(isFinished: Bool = false) -> TimerHubActivityAttributes.ContentState {
+        TimerHubActivityAttributes.ContentState(
+            isRunning: isRunning,
+            isPaused: isPaused,
+            isFinished: isFinished,
+            intervalName: currentInterval?.name ?? "",
+            secondsRemaining: secondsRemaining,
+            totalIntervalSeconds: currentStep?.interval.durationSeconds ?? 0,
+            stepIndex: stepIndex,
+            totalSteps: totalSteps,
+            sessionRepeat: sessionRepeat,
+            sessionRepeatTotal: sessionRepeatCount,
+            colorName: timerColor.name,
+            nextIntervalName: nextStep?.interval.name ?? "",
+            nextIntervalSeconds: nextStep?.interval.durationSeconds ?? 0
+        )
+    }
+
+    private func startLiveActivity() {
+        let state = makeContentState()
+        Task { @MainActor in
+            LiveActivityManager.shared.start(sessionName: sessionName, state: state)
+        }
+        writeWidgetSnapshot(state)
+    }
+
+    private func updateLiveActivity() {
+        let state = makeContentState()
+        Task { @MainActor in
+            LiveActivityManager.shared.update(state: state)
+        }
+        // Write every tick so the widget stays current.
+        writeWidgetSnapshot(state)
+    }
+
+    private func endLiveActivity(finished: Bool) {
+        let finalState = makeContentState(isFinished: finished)
+        Task { @MainActor in
+            LiveActivityManager.shared.end(finalState: finalState)
+        }
+        WidgetDataWriter.clear()
+    }
+
+    // MARK: - Widget snapshot bridge
+
+    /// Convert current engine state to a WidgetSnapshot and persist it
+    /// to the shared App Group so the Home Screen widget can read it.
+    private func writeWidgetSnapshot(_ state: TimerHubActivityAttributes.ContentState) {
+        // Use the engine's absolute intervalEndDate directly — this is the same
+        // date the app timer is counting toward, so widget and app stay in sync.
+        let snapshot = WidgetSnapshot(
+            isActive: isRunning || isPaused,
+            sessionName: sessionName,
+            intervalName: state.intervalName,
+            secondsRemaining: state.secondsRemaining,
+            totalIntervalSeconds: state.totalIntervalSeconds,
+            stepIndex: state.stepIndex,
+            totalSteps: state.totalSteps,
+            sessionRepeat: state.sessionRepeat,
+            sessionRepeatTotal: state.sessionRepeatTotal,
+            colorName: state.colorName,
+            nextIntervalName: state.nextIntervalName,
+            nextIntervalSeconds: state.nextIntervalSeconds,
+            isPaused: isPaused,
+            isFinished: isFinished,
+            updatedAt: Date(),
+            timerEndDate: (isRunning && !isPaused) ? intervalEndDate : nil,
+            pausedSecondsRemaining: isPaused ? state.secondsRemaining : nil
+        )
+        WidgetDataWriter.write(snapshot)
     }
 }
